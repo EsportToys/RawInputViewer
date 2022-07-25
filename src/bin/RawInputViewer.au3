@@ -73,7 +73,6 @@ EndFunc
 Func OSMessageMetadata($timestampOverride=null)
 ; Take the Windows-provided timestamp with a grain of salt, as it only has 10-16ms resolution (you just get deltas of 16, 0, 0... etc). 
 ; Run your own QueryPerformanceCounter or equivalents in a consistent, lightweight thread if you need accurate timestamping.
-     Local Static $user32dll = DllOpen("User32.dll")
      local $msgpos = DllCall($user32dll, 'dword', 'GetMessagePos')
      local $ostime = DllCall($user32dll, 'long', 'GetMessageTime')
      local $msinfo = DllCall($user32dll, 'lparam', 'GetMessageExtraInfo')
@@ -99,6 +98,8 @@ Func OnMessage($hWnd, $uMsg, $wParam, $lParam)
             If $isRecording then return ($wParam=0xF060 ? $GUI_RUNDEFMSG : 0) ; always return 0 except for the close window message
        Case $WM_MOVING, $WM_SIZE, $WM_ENTERMENULOOP
             If $isRecording Then CmdSuspend($g_hForm, true)
+       Case $WM_SETCURSOR
+            Return True
      EndSwitch
 EndFunc
 
@@ -226,27 +227,45 @@ Func QueueEvent($func, $args, $time)
 EndFunc
 
 Func WriteToRawinputBuffer($lParam, ByRef $misc, $time)
+     Local Static $tHeader = 'struct;dword Type;dword Size;handle hDevice;wparam wParam;endstruct;'
+     Local Static $tMouse = $tHeader & 'ushort Flags;ushort Alignment;ushort ButtonFlags;short ButtonData;ulong RawButtons;long LastX;long LastY;ulong ExtraInformation;' , _
+                  $tKeybd = $tHeader & 'ushort MakeCode;ushort Flags;ushort Reserved;ushort VKey;uint Message;ulong ExtraInformation;' , _
+                  $tHidev = $tHeader & 'dword SizeHid;dword Count;'
+     Local Static $sizeHeader = DllStructGetSize(DllStructCreate($tHeader)), _
+                  $sizeMouse  = DllStructGetSize(DllStructCreate($tMouse)), _
+                  $sizeKeybd  = DllStructGetSize(DllStructCreate($tKeybd)), _
+                  $sizeHIDev  = DllStructGetSize(DllStructCreate($tHidev))
      Local Static $buffer_index = 0
-     Local $tRIM = DllStructCreate($tagRAWINPUTHEADER)
+     Local $a = DllCall($user32dll, _
+                            'uint', 'GetRawInputData', _
+                          'handle', $lParam, _
+                            'uint', 0x10000005, _
+                         'struct*', DllStructCreate($tHeader), _
+                           'uint*', $sizeHeader, _
+                            'uint', $sizeHeader)
 
-     If _WinAPI_GetRawInputData($lParam, $tRIM, DllStructGetSize($tRIM), $RID_HEADER) Then
-        Switch DllStructGetData($tRIM,"Type")
+     If $a[0] Then
+        Switch DllStructGetData($a[3],"Type")
           Case 0 ; mouse
-               $tRIM = $tagRAWINPUTMOUSE
+               Local $tag = $tMouse
           Case 1 ; keyboard
-               $tRIM = $tagRAWINPUTKEYBOARD
+               Local $tag = $tKeybd
           Case 2 ; hid
-;               Local $byteSize = DllStructGetData($tRIM,"Size") - DllStructGetSize(DllStructCreate($tagRAWINPUTHEADER & ';' & 'dword SizeHid;dword Count;'))
-               Local $byteSize = DllStructGetData($tRIM,"Size") - DllStructGetSize($tRIM) - 8
-               $tRIM = $tagRAWINPUTHEADER & ';' & 'dword SizeHid;dword Count;' & 'byte RawData[' & $byteSize & '];'
+               Local $tag = $tHidev & 'byte RawData[' & (DllStructGetData($a[3],"Size")-$sizeHidev) & '];'
           Case Else
                FileWrite($gReportFileMkb, "INVALID TYPE AT T=" & $time & @CRLF)
                Return 0
         EndSwitch
-        $tRIM = DllStructCreate($tRIM)
         ; if this is changed to getrawinputbuffer then it would simply loop through them and increment a counter for number of reports added, then return that counter. 
         ; Race condition check is done each time a report is added
-        if _WinAPI_GetRawInputData($lParam, $tRIM, DllStructGetSize($tRIM), $RID_INPUT) then
+        $a = DllCall($user32dll, _
+                         'uint', 'GetRawInputData', _
+                       'handle', $lParam, _
+                         'uint', 0x10000003, _
+                      'struct*', DllStructCreate($tag), _
+                        'uint*', DllStructGetData($a[3],"Size"), _
+                         'uint', $sizeHeader)
+        if $a[0] then
             $buffer_index = _Min($buffer_index, $g_rawinput_maxindex)
             local $i, $j = $buffer_index, $k = $g_rawinput_maxindex
             if $g_rawinput_queued<$GLOBAL_MAXIMUM_BUFFER_SIZE then          ; if the number of queued events isn't full, scan buffer to check that it's not already occupied
@@ -255,7 +274,7 @@ Func WriteToRawinputBuffer($lParam, ByRef $misc, $time)
                        $j = Mod($j+1, $k+1)
                    else
                        $g_rawinput_buffer[$j][0] = true
-                       $g_rawinput_buffer[$j][1] = $tRIM
+                       $g_rawinput_buffer[$j][1] = $a[3]
                        $g_rawinput_buffer[$j][2] = $misc[0] ; position
                        $g_rawinput_buffer[$j][3] = $misc[1] ; timestamp
                        $g_rawinput_buffer[$j][4] = $misc[2] ; extrainfo
@@ -264,14 +283,14 @@ Func WriteToRawinputBuffer($lParam, ByRef $misc, $time)
                        Return 1                                             ; returns number of reports advanced to the buffer, which is 1
                    endif
                Next
-               Return ExpandDummyBuffer($tRIM, $misc)                       ; if no empty slot is found after one loop, expand the buffer by 1, and report that 1 message has been added
+               Return ExpandDummyBuffer($a[3], $misc)                       ; if no empty slot is found after one loop, expand the buffer by 1, and report that 1 message has been added
             else                                                            ; if buffer cannot be expanded further, simply look for any stale report to overwrite, and report that one has been overwritten
                For $i = 0 To $k
                    if  $g_rawinput_buffer[$j][3]>=$time then                ; if report is fresher than current, don't overwrite
                        $j = Mod($j+1, $k+1)
                    else
                        $g_rawinput_buffer[$j][0] = true
-                       $g_rawinput_buffer[$j][1] = $tRIM
+                       $g_rawinput_buffer[$j][1] = $a[3]
                        $g_rawinput_buffer[$j][2] = $misc[0] ; position
                        $g_rawinput_buffer[$j][3] = $misc[1] ; timestamp
                        $g_rawinput_buffer[$j][4] = $misc[2] ; extrainfo
@@ -427,10 +446,10 @@ Func Process_Rawinput_Data($tRIM, ByRef $misc)
   Local $cacheMouTime=$lastMouTime
   Local $cacheKeyTime=$lastKeyTime
   Local $cacheHidTime=$lastHidTime
-  Local $posX = BitAnd($misc[0], 0xFFFF)
-  Local $posY = BitShift($misc[0], 16)
-  Local $time = $misc[1]
-  Local $info = "0x"&Hex($misc[2], 16)
+  Local $posX = BitAnd($misc[0], 0xFFFF) ; from GetMessagePos(), lo-short
+  Local $posY = BitShift($misc[0], 16)   ; from GetMessagePos(), hi-short
+  Local $time = $misc[1]                 ; from GetMessageTime()
+  Local $info = "0x"&Hex($misc[2], 16)   ; from GetMessageExtraInfo()
 
   ; RAWINPUTHEADER
   Local $dwType  = DllStructGetData($tRIM, 'Type') ; RIM_TYPEMOUSE 0, RIM_TYPEKEYBOARD 1, RIM_TYPEHID 2
@@ -444,16 +463,13 @@ Func Process_Rawinput_Data($tRIM, ByRef $misc)
          Local $deltaTime = $cacheMouTime > $time ? $cacheMouTime : $time - $cacheMouTime
          $lastMouTime = $time
 
-         Local $usFlags = DllStructGetData($tRIM, 'Flags')                ; Specifies a bitwise OR of one or more of the following mouse indicator flags.
-         Local $ulButtons = DllStructGetData($tRIM, 'Buttons')            ; Specifies both ButtonFlags and ButtonData values. Mouclass uses Buttons in its interrupt service routine to do a fast single memory access to ButtonFlags and ButtonData.
+         Local $usFlags = DllStructGetData($tRIM, 'Flags')                ; Specifies a bitwise OR of one or more of the mouse indicator flags.
          Local $usButtonFlags = DllStructGetData($tRIM, 'ButtonFlags')    ; Specifies the transition state of the mouse buttons.
          Local $usButtonData = DllStructGetData($tRIM, 'ButtonData')      ; Specifies mouse wheel data, if MOUSE_WHEEL is set in ButtonFlags.
          Local $ulRawButtons = DllStructGetData($tRIM, 'RawButtons')      ; Specifies the raw state of the mouse buttons. The Win32 subsystem does not use this member.
          Local $lLastX = DllStructGetData($tRIM, 'LastX')                 ; Specifies the signed relative or absolute motion in the x direction.
          Local $lLastY = DllStructGetData($tRIM, 'LastY')                 ; Specifies the signed relative or absolute motion in the y direction.
          Local $ulExtraInfo = DllStructGetData($tRIM, 'ExtraInformation') ; Specifies device-specific information.
-
-         Local $wrapScroll = Mod($usButtonData, 32768) - 32768*Int($usButtonData/32768)
 
          ; put whatever extra function you want to do here. This is where you would filter inputs by device and process them separately
          if Demo(false) then
@@ -466,9 +482,9 @@ Func Process_Rawinput_Data($tRIM, ByRef $misc)
                   CameraLockSetState()                                                                ; re-lock cursor accordingly
                endif
                if $lLastX or $lLastY then UpdateMovementCmd($lLastX, $lLastY, $posX, $posY, $hDevice) ; It is ok to move first before updating buttons, since you can't distinguish between the order witin the same report.
-               if $usButtonFlags then UpdateButtonState($usButtonFlags, $wrapScroll, $hDevice)
+               if $usButtonFlags then UpdateButtonState($usButtonFlags, $usButtonData, $hDevice)
             endif
-            FileWrite($gReportFileMkb, "mouse=," & $hDevice & ", bflg=,0x" & Hex($usButtonFlags,4) & ", bdta=,0x" & Hex($wrapScroll,2) & ", dx=," & $lLastX & ", dy=," & $lLastY & ", dt=," & $deltaTime & ", time=," & $time & @CRLF)
+            FileWrite($gReportFileMkb, "mouse=," & $hDevice & ", bflg=,0x" & Hex($usButtonFlags,4) & ", bdta=,0x" & Hex($usButtonData,2) & ", dx=," & $lLastX & ", dy=," & $lLastY & ", dt=," & $deltaTime & ", time=," & $time & ", oscoord=,(" & $posX & " " & $posY & ")" & @CRLF)
          else
             local $newstring = "== RAWINPUTHEADER ==" & @CRLF & _
                                "Device Type: " & _deviceType($dwType) & @CRLF & _
@@ -480,7 +496,7 @@ Func Process_Rawinput_Data($tRIM, ByRef $misc)
                                "Delta:       " & $lLastX & ", " & $lLastY & @CRLF & _
                                "Flags:       " & "0x" & Hex($usFlags,4) & _usFlagsMouse($usFlags) & @CRLF & _
                                "Button Flag: " & "0x" & Hex($usButtonFlags,4) & _usButtonFlags($usButtonFlags) & @CRLF & _
-                               "Button Data: " & ($wrapScroll>0?"+"&$wrapScroll:$wrapScroll) & @CRLF & _
+                               "Button Data: " & ($usButtonData>0?"+"&$usButtonData:$usButtonData) & @CRLF & _
                                "Raw Buttons: " & "0x" & Hex($ulRawButtons,16) & @CRLF & _
                                "Extra Info:  " & "0x" & Hex($ulExtraInfo,16)  & @CRLF & _
                                @CRLF & _
@@ -489,7 +505,7 @@ Func Process_Rawinput_Data($tRIM, ByRef $misc)
                                "OS EvntCoord: " & $posX & ", " & $posY & @CRLF & _
                                "OS ExtraInfo: " & $info ;& ", " & $deltaTime
             UpdateText($newstring) ; this only writes to static variable in the function without triggering update
-            FileWrite($gReportFileMkb, "mouse=," & $hDevice & ", bflg=,0x" & Hex($usButtonFlags,4) & ", bdta=,0x" & Hex($wrapScroll,2) & ", dx=," & $lLastX & ", dy=," & $lLastY & ", ostime=," & $time & ", oscoord=,(" & $posX & " " & $posY & ")" & @CRLF)
+            FileWrite($gReportFileMkb, "mouse=," & $hDevice & ", bflg=,0x" & Hex($usButtonFlags,4) & ", bdta=,0x" & Hex($usButtonData,2) & ", dx=," & $lLastX & ", dy=," & $lLastY & ", ostime=," & $time & ", oscoord=,(" & $posX & " " & $posY & ")" & @CRLF)
          endif
 
 
@@ -613,7 +629,7 @@ Func UpdateMovementCmd($lLastX, $lLastY, $posX, $posY, $handle=null)
         MoveMouseDelta($sendX, $sendY, $singleton_cache)
 EndFunc
 
-Func UpdateButtonState($usButtonFlags, $wrapScroll, $handle=null)
+Func UpdateButtonState($usButtonFlags, $usButtonData, $handle=null)
      Local Static $singleton_cache = DemoSingletonState() ; TODO: refactor DemoSingletonState to take device handle and return struct address, then change this line to Local instead of Local Static (and pass handle)
      Local $xhairstate = DllStructGetData($singleton_cache, "color")
      Local $cameramode = DllStructGetData($singleton_cache, "camlock")
@@ -625,13 +641,25 @@ Func UpdateButtonState($usButtonFlags, $wrapScroll, $handle=null)
         if BitAND($usButtonFlags,4)  then $xhairstate = $cameramode ? BitAND($xhairstate, 0x00ff00ff ) : BitOR( $xhairstate, 0xff00ff00 )
         if BitAND($usButtonFlags,16) then $xhairstate = BitOR( $xhairstate, 0x00ff0000 ) ; add red to state
         if BitAND($usButtonFlags,32) then $xhairstate = BitAND($xhairstate, 0xff00ffff ) ; subtract red from state
-        if $usButtonFlags then SetCrosshairColor($xhairstate, $singleton_cache) ; only update color if actual commands are sent
+        if $usButtonFlags then 
+           SetCrosshairColor($xhairstate, $singleton_cache) ; only update color if actual commands are sent
+           Switch BitAND(0x00ffffff,$xhairstate)
+             Case 0x00ffffff
+	          DllCall($user32dll, "handle", "SetCursor", "handle", $hWhiteCursor[0])
+             Case 0x0000ffff
+	          DllCall($user32dll, "handle", "SetCursor", "handle", $hCyanCursor[0])
+             Case 0x00ffff00
+	          DllCall($user32dll, "handle", "SetCursor", "handle", $hYellowCursor[0])
+             Case 0x0000ff00
+	          DllCall($user32dll, "handle", "SetCursor", "handle", $hLimeCursor[0])
+           EndSwitch
+        endif
 
         ; camera mode toggle check. Not latency-sensitive
         if BitAND($usButtonFlags,1) then DragLockSetState(true, $singleton_cache)
         if BitAND($usButtonFlags,2+16) then DragLockSetState(false, $singleton_cache)
         if BitAND($usButtonFlags,4) then CameraLockSetState(not $cameramode, $singleton_cache)
-        if BitAND($usButtonFlags,1024) then ChangeZoomLevel($wrapScroll, $singleton_cache)
+        if BitAND($usButtonFlags,1024) then ChangeZoomLevel($usButtonData, $singleton_cache)
 
         ; TODO: these should be per device
         if BitAND(BitAND($usButtonFlags,16),16) then
@@ -759,9 +787,17 @@ Func DemoStartupProcedure(ByRef $ref_hWnd, ByRef $ref_hHBITMAP, ByRef $ref_hDC, 
            GUICtrlSetFont (-1, 12)
 #ce
 
+; experimental huge cursor
+; TODO: Seems that even larger cursors are possible if not loading from .cur https://stackoverflow.com/questions/70704210/is-a-cursor-greater-than-512x512-pixels-in-size-possible 
+; https://stackoverflow.com/questions/46014692/windows-cursor-size-bigger-than-maximum-available
+; https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-loadimagea no need to specify size if not requesting defaultsize
+Global $hWhiteCursor = DllCall($user32dll,"handle","LoadImage", "handle", Null, "str", @ScriptDir & "\assets\cursors\white.cur", "uint", 2, "int", 0, "int", 0, "uint", 0x00000010)
+Global $hLimeCursor = DllCall($user32dll,"handle","LoadImage", "handle", Null, "str", @ScriptDir & "\assets\cursors\lime.cur", "uint", 2, "int", 0, "int", 0, "uint", 0x00000010)
+Global $hCyanCursor = DllCall($user32dll,"handle","LoadImage", "handle", Null, "str", @ScriptDir & "\assets\cursors\cyan.cur", "uint", 2, "int", 0, "int", 0, "uint", 0x00000010)
+Global $hYellowCursor = DllCall($user32dll,"handle","LoadImage", "handle", Null, "str", @ScriptDir & "\assets\cursors\yellow.cur", "uint", 2, "int", 0, "int", 0, "uint", 0x00000010)
+GUIRegisterMsg($WM_SETCURSOR,OnMessage)
     Return $arr
 EndFunc
-
 
 Func DemoWinddownProcedure(ByRef $ref_hWnd, ByRef $ref_hHBITMAP, ByRef $ref_hDC, ByRef $ref_hDC_Backbuffer, ByRef $ref_oDC_Obj, ByRef $ref_hGfxCtxt, ByRef $ref_hPen, ByRef $mouse)
      AdlibUnRegister ( "FrameCounterUpdate" )
@@ -775,6 +811,13 @@ Func DemoWinddownProcedure(ByRef $ref_hWnd, ByRef $ref_hHBITMAP, ByRef $ref_hDC,
 
      GUIDelete($ref_hWnd)
      RestorePointerSpeedAndAccel($mouse)
+
+GUIRegisterMsg($WM_SETCURSOR,"")
+Local $delWhite = DllCall($user32dll,"bool","DestroyCursor","handle",$hWhiteCursor[0])
+Local $delLime = DllCall($user32dll,"bool","DestroyCursor","handle",$hLimeCursor[0])
+Local $delCyan = DllCall($user32dll,"bool","DestroyCursor","handle",$hCyanCursor[0])
+Local $delYellow = DllCall($user32dll,"bool","DestroyCursor","handle",$hYellowCursor[0])
+;MsgBox(0,"",$delWhite[0] & "," & $delLime[0] & "," & $delCyan[0] & "," & $delYellow[0])
 EndFunc
 
 
@@ -803,9 +846,11 @@ Func DemoDrawRoutine(Const $ctx, Const $pen, Const $width, Const $height)
 ;                       $lineXpos = Mod(Mod($i-$currentX,$modceil)+$modceil,$modceil)
                        _GDIPlus_GraphicsDrawLine($ctx, $lineXpos, 0, $lineXpos, $height-1, $pen)   ; vertical lines, from 0 to height-1 at xpos
                    next
+#cs
                    _GDIPlus_PenSetColor($pen, $currentColor)                                       ; xhair color
                    _GDIPlus_GraphicsDrawLine($ctx,        0, $height/2,   $width, $height/2, $pen)
                    _GDIPlus_GraphicsDrawLine($ctx, $width/2,         0, $width/2,   $height, $pen)
+#ce
 
 EndFunc
 
@@ -816,12 +861,12 @@ Func Demo($toggle = null, $cursorlock=null)
      Local Static $imgDim[4], $aPoint[3][2], $mouse=[10, 0, 0, 0] , $renderUnlocked=false
      Local Static $submodebackup=3
      if $toggle then ; this must be checked before the render case, because $renderunlocked is stateful
-        if $renderUnlocked then
+        if $renderUnlocked then ; end the demo
            $renderUnlocked = false ; do this first in case main loop calls
-           CursorLockHider()
+           _MouseTrap()
            DemoWinddownProcedure($ref_hWnd, $ref_hHBITMAP, $ref_hDC, $ref_hDC_Backbuffer, $ref_oDC_Obj, $ref_hGfxCtxt, $ref_hPen, $mouse )
            SetDeviceSubscriptionMode($submodebackup)
-        else
+        else                    ; start the demo
            $submodebackup = GetDeviceSubscriptionMode()
            SetDeviceSubscriptionMode(3+BitAND(4,$submodebackup))
            Local $arr = DemoStartupProcedure( $ref_hWnd, $ref_hHBITMAP, $ref_hDC, $ref_hDC_Backbuffer, $ref_oDC_Obj, $ref_hGfxCtxt, $ref_hPen, $mouse )
@@ -839,7 +884,9 @@ $aPoint[2][1] = $arr[1]
            $g_mousetrap_bound[1]=$imgDim[3]
            $g_mousetrap_bound[2]=$imgDim[0]+$imgDim[2]
            $g_mousetrap_bound[3]=$imgDim[1]+$imgDim[3]
-           CursorLockHider(true,$imgDim[2]+$imgDim[0]/2,$imgDim[3]+$imgDim[1]/2,$imgDim[2]+$imgDim[0]/2,$imgDim[3]+$imgDim[1]/2)  ; lock to halflength positions of viewport
+           _MouseTrap(Int($imgDim[2]+$imgDim[0]/2),Int($imgDim[3]+$imgDim[1]/2),Int($imgDim[2]+$imgDim[0]/2)+1,Int($imgDim[3]+$imgDim[1]/2)+1)  ; lock to halflength positions of viewport
+           GUISetCursor(16,1)
+           DllCall($user32dll, "handle", "SetCursor", "handle", $hLimeCursor[0])
            $renderUnlocked = true ; do this last
         endif
      elseif $renderUnlocked and $toggle=null then ; called from main loop. Note that we only run on main loop calls, otherwise the processing gets clogged
@@ -848,36 +895,13 @@ $aPoint[2][1] = $arr[1]
 ;_WinAPI_PlgBlt($ref_hDC, $aPoint, $ref_hDC_backbuffer, 0, 0, $imgDim[0], $imgDim[1])
            FrameCounterSingleton()
      elseif not ($cursorlock=null) then ; lock/unlock cursor, need stateful data of window size/position. Low priority, latency doesn't matter so put it in elseif
-         if $cursorlock then ; lock to boundary of render
-            CursorLockHider(true, $imgDim[2]+$imgDim[0]/2,$imgDim[3]+$imgDim[1]/2,$imgDim[2]+$imgDim[0]/2,$imgDim[3]+$imgDim[1]/2)
-         else                ; lock to center of screen
-            CursorLockHider(false, $g_mousetrap_bound[0], $g_mousetrap_bound[1], $g_mousetrap_bound[2], $g_mousetrap_bound[3])
+         if $cursorlock then ; lock to center of screen
+            _MouseTrap(Int($imgDim[2]+$imgDim[0]/2),Int($imgDim[3]+$imgDim[1]/2),Int($imgDim[2]+$imgDim[0]/2)+1,Int($imgDim[3]+$imgDim[1]/2)+1)
+         else                ; lock to boundary of render
+            _MouseTrap($g_mousetrap_bound[0], $g_mousetrap_bound[1], $g_mousetrap_bound[2], $g_mousetrap_bound[3])
          endif
      endif
      Return $renderUnlocked ; if called specifically with false then just queries state
-EndFunc
-
-
-Func CursorLockHider($hide=null, $boundX1=null, $boundY1=null, $boundX2=null, $boundY2=null)
-     if $hide then
-            Local $aCursor = _WinAPI_GetCursorInfo()
-            while $aCursor[1]
-                 _WinAPI_ShowCursor(null)
-                 $aCursor = _WinAPI_GetCursorInfo()
-            wend
-     else
-            Local $aCursor = _WinAPI_GetCursorInfo()
-            while not $aCursor[1]
-                 _WinAPI_ShowCursor(true)
-                 $aCursor = _WinAPI_GetCursorInfo()
-            wend
-     endif
-     if $hide==null or $boundX1==null or $boundY1==null or $boundX2==null or $boundY2==null then
-            _MouseTrap()
-     else
-;            MsgBox(0,"",$boundX1 & "," & $boundY1 & "," & $boundX2 & "," & $boundY2)
-            _MouseTrap($boundX1, $boundY1, $boundX2, $boundY2)
-     endif
 EndFunc
 
 Func FrameCounterSingleton($update=null, $ref_hWnd=null)

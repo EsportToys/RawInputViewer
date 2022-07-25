@@ -28,6 +28,7 @@ Global Const $GLOBAL_PROGRAM_ICON_PATH = "shell32_229.ico"
 Global Const $GLOBAL_MAXIMUM_BUFFER_SIZE = 256
 Global Const $GLOBAL_INITIAL_XHAIR_COLOR = 0xff00ff00
 Global Const $GLOBAL_INITIAL_GRIDSIZE = 320
+Global Const $user32dll = DllOpen("User32.dll")
 
 
 If $CMDLINE[0] > 0 then CmdLineHandler($CMDLINE)
@@ -75,11 +76,11 @@ Global Const $g_suspend_button = GUICtrlCreateButton($i18n_suspend_buttontext, 1
 GUICtrlSetState($g_suspend_button,$GUI_DISABLE)
 Global Const $g_device_button = GUICtrlCreateButton($i18n_devices_buttontext, 215, 10, 100, 25)
 Global Const $g_demo_button = GUICtrlCreateButton($i18n_demo_buttontext, 315, 10, 100, 25)
-Global Const $g_mouse_checkbox = GUICtrlCreateCheckbox("Mouse", 15, 35, 100, 35)
+Global Const $g_mouse_checkbox = GUICtrlCreateCheckbox($i18n_mouse_checkbox, 15, 35, 100, 35)
 GUICtrlSetState($g_mouse_checkbox, $GUI_CHECKED)
-Global Const $g_keybd_checkbox = GUICtrlCreateCheckbox("Keyboard", 115, 35, 100, 35)
+Global Const $g_keybd_checkbox = GUICtrlCreateCheckbox($i18n_keyboard_checkbox, 115, 35, 100, 35)
 GUICtrlSetState($g_keybd_checkbox, $GUI_CHECKED)
-Global Const $g_hidev_checkbox = GUICtrlCreateCheckbox("Other Human-Interface Devices", 215, 35, 200, 35)
+Global Const $g_hidev_checkbox = GUICtrlCreateCheckbox($i18n_hid_checkbox, 215, 35, 200, 35)
 Global Const $g_label = GUICtrlCreateEdit($i18n_clicktostart_title & @CRLF, 15, 70, 400, 275, $ES_AUTOVSCROLL + $WS_VSCROLL + $ES_READONLY)
 GUICtrlSetFont($g_label, 9, 0, 0, "Consolas")
 ;Global Const $g_log = GUICtrlCreateEdit("== " & $i18n_devicechange_title & " ==" & @CRLF, 25, 350, 400, 150, $ES_AUTOVSCROLL + $WS_VSCROLL + $ES_READONLY)

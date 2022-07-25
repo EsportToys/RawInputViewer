@@ -18,6 +18,9 @@ Func initialize_i18n_strings($inipath)
                 $resume_buttontext, _
                 $devices_buttontext, _
                 $demo_buttontext, _
+                $mouse_checkbox, _
+                $keyboard_checkbox, _
+                $hid_checkbox, _
                 $ENUM_NUM_ITEMS_i18n
 
      Local $default[$ENUM_NUM_ITEMS_i18n][2]
@@ -36,6 +39,9 @@ Func initialize_i18n_strings($inipath)
      $default[$resume_buttontext][$key] = "resume_buttontext"
      $default[$devices_buttontext][$key] = "devices_buttontext"
      $default[$demo_buttontext][$key] = "demo_buttontext"
+     $default[$mouse_checkbox][$key] = "mouse_checkbox"
+     $default[$keyboard_checkbox][$key] = "keyboard_checkbox"
+     $default[$hid_checkbox][$key] = "hid_checkbox"
 
      $default[$program_title_suffix][$val] = " - RawInputViewer"
      $default[$inactive_status][$val] = "Inactive"
@@ -52,6 +58,9 @@ Func initialize_i18n_strings($inipath)
      $default[$resume_buttontext][$val] = "&Resume"
      $default[$devices_buttontext][$val] = "Devices"
      $default[$demo_buttontext][$val] = "Demo"
+     $default[$mouse_checkbox][$val] = "Mouse"
+     $default[$keyboard_checkbox][$val] = "Keyboard"
+     $default[$hid_checkbox][$val] = "Other Human-Interface Devices"
 
      Local $var, $str
      For $i=0 to $ENUM_NUM_ITEMS_i18n-1
