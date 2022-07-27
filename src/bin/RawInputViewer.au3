@@ -757,7 +757,7 @@ Func DemoStartupProcedure(ByRef $ref_hWnd, ByRef $ref_hHBITMAP, ByRef $ref_hDC, 
 
     $ref_hWnd = GUICreate($i18n_demo_wintitle, $arr[0], $arr[1], $arr[2], $arr[3], $WS_POPUP)
     GUISetBkColor($COLOR_BLACK, $ref_hWnd)
-    GUISetIcon($GLOBAL_PROGRAM_ICON_PATH)
+    GUISetIcon($GLOBAL_PROGRAM_ICON_PATH,229)
     FrameCounterSingleton(False, $ref_hWnd)
     AdlibRegister ( "FrameCounterUpdate" , 1000 )
 
