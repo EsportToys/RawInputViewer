@@ -26,6 +26,95 @@ Func CheckUniqueUsageAndAdd(ByRef $arr, $page, $id)
      $arr[$total-1][1]=$id
 EndFunc
 
+Func MakeLogString($raw,$misc)
+     Local $_ = RAWINPUT($raw)
+     Local $s = $misc.qpc, $p = DllStructCreate('short x;short y;',DllStructGetPtr($misc))
+     If IsDllStruct($_) Then
+        Switch $_.Type
+          Case 0
+               $s &= ",mouse=," & $_.hDevice 
+               $s &= ", bflg=,0x" & Hex($_.ButtonFlags,4) 
+               $s &= ", bdta=,0x" & Hex($_.ButtonData,4) 
+               $s &= ", dx=," & $_.LastX 
+               $s &= ", dy=," & $_.LastY
+          Case 1
+               $s &= ",keybd=," & $_.hDevice 
+               $s &= ", wmsg=,0x" & Hex($_.Message,4) 
+               $s &= ", vkey=,0x" & Hex($_.VKey,2) 
+               $s &= ", make=," & Hex($_.MakeCode,2) 
+               $s &= ", flag=," & $_.Flags 
+          Case 2
+               $s &= ",hidev=," & $_.hDevice 
+               $s &= ", byte=," & $_.SizeHid 
+               $s &= ", ninp=," & $_.Count 
+               For $i = 1 to $_.Count
+                   Local $name = 'Input' & $i
+                   $s &= ", " & $name & "=," & DllStructGetData($_,$name)
+               Next
+        EndSwitch
+     Else
+        $s &= ( $misc.wParam-1 ? ",remov=,0x" : ",arrve=,0x" ) 
+        $s &= Hex($misc.lParam,16) & ", =,, =,, =,, =,"
+     EndIf
+     Local Static $pos = DllStructCreate('short x;short y')
+     Local Static $write = DllStructCreate('dword;',DllStructGetPtr($pos))
+     DllStructSetData($write,1,$misc.pt)
+     $s &= ", os=,(" & $pos.x & " " & $pos.y & " " & $misc.time & " " & $misc.info & ")" 
+     Return $s & @CRLF
+EndFunc 
+
+Func MakeReportString($raw,$misc)
+     Local  $_ = RAWINPUT($raw)
+     Local  $s = _
+            "== RAWINPUTHEADER ==" & @CRLF & _
+            "Device Type: " & _deviceType($_.Type) & @CRLF & _
+            "Report Size: " & $_.Size & " bytes" & @CRLF & _
+            "Device Handle: " & $_.hDevice & @CRLF & _
+            "Received in Background: " & ($_.wParam?'TRUE':'FALSE') & @CRLF & @CRLF
+     Switch $_.Type
+       Case 0
+            $s &= _
+            "== RAWMOUSE ==" & @CRLF & _
+            "Delta:       " & $_.LastX & ", " & $_.LastY & @CRLF & _
+            "Flags:       " & "0x" & Hex($_.Flags,4) & _usFlagsMouse($_.Flags) & @CRLF & _
+            "Button Flag: " & "0x" & Hex($_.ButtonFlags,4) & _usButtonFlags($_.ButtonFlags) & @CRLF & _
+            "Button Data: " & ($_.ButtonData>0?'+':'') & $_.ButtonData & @CRLF & _
+            "Raw Buttons: " & "0x" & Hex($_.RawButtons,8) & @CRLF & _
+            "Extra Info:  " & "0x" & Hex($_.ExtraInformation,8)  & @CRLF & @CRLF
+       Case 1
+            $s &= _
+            "== RAWKEYBOARD ==" & @CRLF & _
+            "Make Code:   " & "0x" & Hex($_.MakeCode,4) & @CRLF & _
+            "Flags:       " & "0x" & Hex($_.Flags,4) & _usFlagsKeyboard($_.Flags) & @CRLF & _
+            "Reserved:    " & "0x" & Hex($_.Reserved,4) & @CRLF & _
+            "Virtual Key: " & "0x" & Hex($_.VKey,4) & _usVkey($_.VKey) & @CRLF & _
+            "Win Message: " & "0x" & Hex($_.Message,8) & _uiMessage($_.Message) & @CRLF & _
+            "Extra Info:  " & "0x" & Hex($_.ExtraInfo,8) & @CRLF & @CRLF
+       Case 2
+            $s &= _
+            "== RAWHID ==" & @CRLF & _
+            "Bytes per Input: " & $_.SizeHid & @CRLF & _
+            "Number of Inputs: " & $_.Count & @CRLF
+            For $i = 1 to $_.Count
+                Local $name = 'Input' & $i
+                $s &= $name & ': ' & DllStructGetData($_,$name) & @CRLF
+            Next
+            $s &= @CRLF
+     EndSwitch
+
+     Local $time = $misc.time                 ; from GetMessageTime()
+     Local $info = "0x"&Hex($misc.info, 8)   ; from GetMessageExtraInfo()
+     Local Static $pos = DllStructCreate('short x;short y')
+     Local Static $write = DllStructCreate('dword;',DllStructGetPtr($pos))
+     DllStructSetData($write,1,$misc.pt)
+     Return $s & _
+            "== MSGINFO ==" & @CRLF & _
+            "OS Timestamp: " & $time & " ms" & @CRLF & _
+            "OS EvntCoord: " & $pos.x & ", " & $pos.y & @CRLF & _
+            "OS ExtraInfo: " & $info ;& ", " & $deltaTime
+EndFunc
+
+
 Func GetConnectedRawinputDevicesUsages($devflag) ; called by RawinputStateController to return a 2D array for registration processing
      ; UsagePage 0x01 = generic desktop controls; Usage 0x02 = mouse
      ; UsagePage 0x01 = generic desktop controls; Usage 0x06 = keyboard
@@ -49,7 +138,6 @@ Func GetConnectedRawinputDevicesUsages($devflag) ; called by RawinputStateContro
 EndFunc
 
 Func GetConnectedRawinputDevicesInfoString($matchHandleFilter=null)
-     Local $tText
      Local $list = _WinAPI_EnumRawInputDevices()
   If IsArray($list) Then
      Switch $matchHandleFilter
@@ -69,49 +157,89 @@ EndFunc
 
 Func GetDeviceInfoString($handle, $type)
      Local Const $hidtable = @ScriptDir & '\assets\hidusagetable.ini'
-     Local $tName, $tText = DllStructCreate('wchar[256]')
-     Local $device_info_string = 'Handle: ' & $handle & @CRLF
+     Local $tDevName = DllStructCreate('wchar[256]')
+     Local $outputString = 'Handle: ' & $handle & @CRLF
 
-     If _WinAPI_GetRawInputDeviceInfo($handle, $tText, DllStructGetSize($tText), $RIDI_DEVICENAME) Then
-        Local $name = DllStructGetData($tText, 1)
-        $device_info_string = $device_info_string & $name & @CRLF
+     If _WinAPI_GetRawInputDeviceInfo($handle, $tDevName, DllStructGetSize($tDevName), $RIDI_DEVICENAME) Then
+        Local $hidDll = DllOpen('hid.dll')
+        $outputString = $outputString & DllStructGetData($tDevName, 1) & @CRLF
 
-        Local $HIDHandle = _WinAPI_CreateFile( $name , $OPEN_EXISTING , 0 , BitOR($FILE_SHARE_READ,$FILE_SHARE_WRITE) , Null , Null )
+        Local $HIDHandle = _WinAPI_CreateFile( DllStructGetData($tDevName, 1) , $OPEN_EXISTING , 0 , BitOR($FILE_SHARE_READ,$FILE_SHARE_WRITE) , Null , Null )
         If $HIDHandle Then
-           $tName = DllStructCreate('struct;ULONG Size; USHORT VendorID; USHORT ProductID; USHORT VersionNumber;endstruct')
-                    DllStructSetData($tName, 'Size', DllStructGetSize($tName))
-                    DllCall ( "Hid.dll", 'boolean', 'HidD_GetAttributes', _
-                                         'handle' , $HIDHandle , _
-                                         'struct*', $tName )
-           Local $s_vend = 'VID_' & Hex(DllStructGetData($tName, 'VendorID'),4)
-           Local $s_prod = 'PID_' & Hex(DllStructGetData($tName, 'ProductID'),4)
-           Local $s_revi = 'REV_' & Hex(DllStructGetData($tName, 'VersionNumber'),4)
+           Local $tHidAttr = DllStructCreate('struct;ULONG Size; USHORT VendorID; USHORT ProductID; USHORT VersionNumber;endstruct')
+                             DllStructSetData($tHidAttr, 'Size', DllStructGetSize($tHidAttr))
+           Local $aHidAttr = DllCall ( $hidDll, _ 
+                                       'boolean', 'HidD_GetAttributes', _
+                                       'handle' , $HIDHandle , _
+                                       'struct*', $tHidAttr )
+           Local $tManuStr = DllStructCreate('wchar[126]')
+           Local $aManuStr = DllCall ( $hidDll, _ 
+                                       'boolean', 'HidD_GetManufacturerString', _
+                                       'handle' , $HIDHandle , _
+                                       'struct*', $tManuStr, _
+                                       'ulong'  , DllStructGetSize($tManuStr) )
+           Local $tProdStr = DllStructCreate('wchar[126]')
+           Local $aProdStr = DllCall ( $hidDll, _ 
+                                       'boolean', 'HidD_GetProductString', _
+                                       'handle' , $HIDHandle , _
+                                       'struct*', $tProdStr, _
+                                       'ulong'  , DllStructGetSize($tProdStr) )
+           Local $sVend = 'VID_' & Hex(DllStructGetData($tHidAttr, 'VendorID'),4)
+           Local $sProd = 'PID_' & Hex(DllStructGetData($tHidAttr, 'ProductID'),4)
+           Local $sRevi = 'REV_' & Hex(DllStructGetData($tHidAttr, 'VersionNumber'),4)
+           If DllStructGetData($tManuStr, 1) Then $sVend = $sVend & ' (' & DllStructGetData($tManuStr, 1) & ')'
+           if DllStructGetData($tProdStr, 1) then $sProd = $sProd & ' (' & DllStructGetData($tProdStr, 1) & ')'
 
-           $tName = DllStructCreate('wchar[126]')
-                    DllCall ( "Hid.dll", 'boolean', 'HidD_GetManufacturerString', _
-                                         'handle' , $HIDHandle , _
-                                         'struct*', $tName, _
-                                         'ulong'  , DllStructGetSize($tName) )
-           if DllStructGetData($tName, 1) then $s_vend = $s_vend & ' (' & DllStructGetData($tName, 1) & ')'
+           Local $tSeriStr = DllStructCreate('wchar[126]')
+           Local $aSeriStr = DllCall ( $hidDll, _ 
+                                       'boolean', 'HidD_GetSerialNumberString', _
+                                       'handle' , $HIDHandle , _
+                                       'struct*', $tSeriStr, _
+                                       'ulong'  , DllStructGetSize($tSeriStr) )
+           Local $tNumBuff = DllStructCreate("int")
+           Local $aNumBuff = DllCall ( $hidDll, _ 
+                                       'boolean', 'HidD_GetNumInputBuffers', _
+                                       'handle' , $HIDHandle , _
+                                       'struct*', $tNumBuff )
 
-                    DllCall ( "Hid.dll", 'boolean', 'HidD_GetProductString', _
-                                         'handle' , $HIDHandle , _
-                                         'struct*', $tName, _
-                                         'ulong'  , DllStructGetSize($tName) )
-           if DllStructGetData($tName, 1) then $s_prod = $s_prod & ' (' & DllStructGetData($tName, 1) & ')'
-
-           $device_info_string = $device_info_string & _
-                                  '  Vendor:  ' & $s_vend & @CRLF & _
-                                  '  Product: ' & $s_prod & @CRLF & _
-                                  '  Version: ' & $s_revi & @CRLF
-
-           Local $serial = DllCall ( "Hid.dll", 'boolean', 'HidD_GetSerialNumberString', _
-                                                'handle' , $HIDHandle , _
-                                                'struct*', $tName, _
-                                                'ulong'  , DllStructGetSize($tName) )
-           if $serial[0] then $device_info_string = $device_info_string & '  Serial#: ' & DllStructGetData($tName, 1) & @CRLF
+           If $aHidAttr[0] Then
+              $outputString = $outputString & _
+                              '  Vendor:  ' & $sVend & @CRLF & _
+                              '  Product: ' & $sProd & @CRLF & _
+                              '  Version: ' & $sRevi & @CRLF
+           EndIf
+           If $aSeriStr[0] Then 
+              $outputString = $outputString & _ 
+                              '  Serial#: ' & DllStructGetData($tSeriStr, 1) & @CRLF
+           EndIf
+           If $aNumBuff[0] Then 
+              $outputString = $outputString & _ 
+                              '  Buffers: ' & DllStructGetData($tNumBuff, 1) & @CRLF
+           EndIf
+           ; The HID class driver requires a minimum of two input buffers. 
+           ; On Windows 2000, the maximum number of input buffers that the HID class driver supports is 200, 
+           ; and on Windows XP and later, the maximum number of input buffers that the HID class driver supports is 512. 
+           ; The default number of input buffers is 32.
+#cs   
+           ; GUID_DEVINTERFACE_MOUSE    {378de44c-56ef-11d1-bc8c-00a0c91405dd}
+           ; GUID_DEVINTERFACE_KEYBOARD {884b96c3-56ef-11d1-bc8c-00a0c91405dd}
+           ; GUID_DEVINTERFACE_HID      {4d1e55b2-f16f-11cf-88cb-001111000030}      
+           Local $tIntGuid = DllStructCreate("dword Data1; word Data2; word Data3; byte Data4[8]")
+                             DllCall ( $hidDll, _ 
+                                       "none", "HidD_GetHidGuid", _
+                                       "struct*", $tIntGuid )
+           Local $sGUID = Hex(DllStructGetData($tIntGuid,'Data1'),8) & '-' & _
+                          Hex(DllStructGetData($tIntGuid,'Data2'),4) & '-' & _ 
+                          Hex(DllStructGetData($tIntGuid,'Data3'),4) & '-' & _ 
+                          Hex(DllStructGetData($tIntGuid,'Data4'),12)
+           If $sGUID Then
+              $outputString = $outputString & _
+                              '  Interface: ' & $sGUID & @CRLF
+           EndIf
+#ce
         EndIf
         _WinAPI_CloseHandle($HIDHandle)
+        DllClose($hidDll)
      EndIf
 
      Switch $type
@@ -119,7 +247,7 @@ Func GetDeviceInfoString($handle, $type)
             Local Const $mouseRIDstruct='dword Size;dword Type;struct;dword Id;dword NumberOfButtons;dword SampleRate;int HasHorizontalWheel;endstruct;dword Unused[2];'
             Local $devInf = DllStructCreate($mouseRIDstruct) ; $tagRID_INFO_MOUSE in WinAPISys.au3 has a typo 
             If _WinAPI_GetRawInputDeviceInfo($handle, $devInf, DllStructGetSize($devInf), $RIDI_DEVICEINFO ) Then
-               $device_info_string = $device_info_string & _
+               $outputString = $outputString & _
                                   '      HID Type:   ' & _deviceType(DllStructGetData($devInf, 'Type'))                                         & @CRLF & _
                                   '      Id:         ' & '0x' & Hex(DllStructGetData($devInf, 'Id'),4) & _mouseIdType(DllStructGetData($devInf, 'Id')) & @CRLF & _
                                   '      Buttons:    ' & DllStructGetData($devInf, 'NumberOfButtons')                                           & @CRLF & _
@@ -131,7 +259,7 @@ Func GetDeviceInfoString($handle, $type)
             Local $devInf = DllStructCreate($keyboardRIDstruct) ; $tagRID_INFO_KEYBOARD in WinAPISys.au3 has a typo
 
             If _WinAPI_GetRawInputDeviceInfo($handle, $devInf, DllStructGetSize($devInf), $RIDI_DEVICEINFO ) Then
-               $device_info_string = $device_info_string & _
+               $outputString = $outputString & _
                                   '      HID Type:   ' & _deviceType(DllStructGetData($devInf, 'Type'))                                            & @CRLF & _
                                   '      KbType:     ' & '0x' & Hex(DllStructGetData($devInf, 'KbType'),2) & _kbType(DllStructGetData($devInf, 'KbType')) & @CRLF & _
                                   '      KbSubType:  ' & '0x' & Hex(DllStructGetData($devInf, 'KbSubType'),2)                                             & @CRLF & _
@@ -145,16 +273,29 @@ Func GetDeviceInfoString($handle, $type)
             Local $devInf = DllStructCreate($hidRIDstruct) ; $tagRID_INFO_HID in WinAPISys.au3 has a typo
 
             If _WinAPI_GetRawInputDeviceInfo($handle, $devInf, DllStructGetSize($devInf), $RIDI_DEVICEINFO ) Then
-               $device_info_string = $device_info_string & _
+               $outputString = $outputString & _
                                   '      HID Type:  ' & _deviceType(DllStructGetData($devInf, 'Type'))                                                         & @CRLF & _
                                   '      VendorID:  ' & Hex(DllStructGetData($devInf, 'VendorId'),4)                                                           & @CRLF & _
                                   '      ProductID: ' & Hex(DllStructGetData($devInf, 'ProductId'),4)                                                          & @CRLF & _
                                   '      Revision:  ' & Hex(DllStructGetData($devInf, 'VersionNumber'),4)                                                      & @CRLF & _
                                   '      UsagePage: ' & _HIDUsageString($hidtable, DllStructGetData($devInf, 'UsagePage'))                                     & @CRLF & _
                                   '      UsageID:   ' & _HIDUsageString($hidtable, DllStructGetData($devInf, 'UsagePage'), DllStructGetData($devInf, 'Usage')) & @CRLF 
+
             EndIf
      EndSwitch
-     Return $device_info_string
+#cs
+            Local $presize = DllCall('user32.dll','uint','GetRawInputDeviceInfo','handle',$handle,'uint',0x20000005,'struct*',Null,'uint*',Null)[4]
+            Local $predata = DllCall('user32.dll','uint','GetRawInputDeviceInfo','handle',$handle,'uint',0x20000005,'struct*',DllStructCreate('byte['&$presize&']'),'uint*',$presize)[3]
+            If $presize Then 
+               $outputString &= '      Preparsed Data (' & $presize & ' bytes): ' & @CRLF & '      '
+               For $i=1 To $presize
+                   $outputString &= Hex(DllStructGetData($predata,1,$i),2) & ' '
+                   If Not Mod($i,4) Then $outputString &= @CRLF & '      '
+               Next
+               $outputString &= @CRLF
+            EndIf
+#ce
+     Return $outputString
 ; code adapted from https://www.autoitscript.com/forum/topic/190157-how-can-i-use-_winapi_getrawinputdeviceinfo-to-get-hid-device-info/?do=findComment&comment=1364904
 ; https://stackoverflow.com/questions/12656236/how-to-get-human-readable-name-for-rawinput-hid-device
 ; https://docs.microsoft.com/en-us/windows-hardware/drivers/hid/hidclass-hardware-ids-for-top-level-collections
