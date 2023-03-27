@@ -1,7 +1,3 @@
-#include <WinAPIGdi.au3>
-#include <WinAPIGdiDC.au3>
-#include <GDIPlus.au3>
-
 Func UpdateMovementCmd($lLastX, $lLastY, $posX, $posY, $handle=null)
      Local Static $singleton_cache = DemoSingletonState() ; TODO: refactor DemoSingletonState to take device handle and return struct address, then change this line to Local instead of Local Static (and pass handle)
      Local $cameramode = DllStructGetData($singleton_cache, "camlock")
@@ -150,7 +146,7 @@ Func DemoSingletonState($init=null) ; todo: refactor to take device handle, and 
      return $singleton_demo_state ; by default just fetch address to struct
 EndFunc
 
-Func DemoStartupProcedure(ByRef $ref_hWnd, ByRef $ref_hHBITMAP, ByRef $ref_hDC, ByRef $ref_hDC_Backbuffer, ByRef $ref_oDC_Obj, ByRef $ref_hGfxCtxt, ByRef $ref_hPen, ByRef $mouse)
+Func DemoStartupProcedure(ByRef $ref_hWnd, ByRef $mouse)
     Local $arr[4]
     $arr[0] = ProgramCommand("demo_render_width")
     $arr[1] = ProgramCommand("demo_render_height")
@@ -158,11 +154,9 @@ Func DemoStartupProcedure(ByRef $ref_hWnd, ByRef $ref_hHBITMAP, ByRef $ref_hDC, 
     $arr[1] = $arr[1]>480?round($arr[1]):480
     $arr[2] = round((@DeskTopWidth-$arr[0])/2)
     $arr[3] = round((@DeskTopHeight-$arr[1])/2)
+    InitBigCursors($arr[0],$arr[1])
     BackupPointerSpeedAndAccel($mouse)
     DisablePointerSpeedAndAccel()
-    SplashTextOn ( "Please wait...", "Preparing buffer, please wait...", $arr[0],$arr[1],$arr[2],$arr[3],1)
-    InitBigCursors($arr[0],$arr[1])
-    SplashOff()
     DemoSingletonState(true) ; ask it to initialize state
     $ref_hWnd = GUICreate($i18n_demo_wintitle, $arr[0], $arr[1], $arr[2], $arr[3], 0x80000000)
     GUISetBkColor($COLOR_BLACK, $ref_hWnd)
@@ -170,36 +164,21 @@ Func DemoStartupProcedure(ByRef $ref_hWnd, ByRef $ref_hHBITMAP, ByRef $ref_hDC, 
     FrameCounterSingleton(False, $ref_hWnd)
     AdlibRegister ( "FrameCounterUpdate" , 1000 )
 
-; ------------------ adapted example Autoit Code from https://www.autoitscript.com/autoit3/docs/libfunctions/_WinAPI_BitBlt.htm ------------------
-    ;create a faster buffered graphics frame set for smoother gfx object movements
-    _GDIPlus_Startup()                                                                        ;initialize GDI+
-    Local $hBitmap = _GDIPlus_BitmapCreateFromScan0($arr[0],$arr[1])                          ;create an empty bitmap
-    $ref_hHBITMAP = _GDIPlus_BitmapCreateHBITMAPFromBitmap($hBitmap)                          ;convert GDI+ bitmap to GDI bitmap
-    _GDIPlus_BitmapDispose($hBitmap)                                                          ;delete GDI+ bitmap because not needed anymore
-    $ref_hDC = _WinAPI_GetDC($ref_hWnd)                                                       ;get device context from GUI
-    $ref_hDC_Backbuffer = _WinAPI_CreateCompatibleDC($ref_hDC)                                ;creates a memory device context compatible with the specified device
-    $ref_oDC_Obj = _WinAPI_SelectObject($ref_hDC_Backbuffer, $ref_hHBITMAP)                   ;selects an object into the specified device context
-    $ref_hGfxCtxt = _GDIPlus_GraphicsCreateFromHDC($ref_hDC_Backbuffer)                       ;create a graphics object from a device context (DC)
-;    _GDIPlus_GraphicsSetSmoothingMode($ref_hGfxCtxt, $GDIP_SMOOTHINGMODE_HIGHQUALITY)           ;set smoothing mode (8 X 4 box filter)
-;    _GDIPlus_GraphicsSetPixelOffsetMode($ref_hGfxCtxt, $GDIP_PIXELOFFSETMODE_HIGHQUALITY)
-    $ref_hPen = _GDIPlus_PenCreate()                                                          ;create a pen object
     GUISetState(@SW_DISABLE, $g_hForm)
     GUISetState(@SW_SHOW, $ref_hWnd)
     GUIRegisterMsg($WM_SETCURSOR,WndProc)
+    ToolTip( _
+       'Press Esc to quit, click Mouse 2 to toggle crosshair lock.' & @CRLF & _ 
+       'Try out the different ways of panning using edge-pushing, mouse1-drag, or mouse3-pan.', _ 
+       $arr[2],$arr[3]+$arr[1])
     Return $arr
 EndFunc
 
-Func DemoWinddownProcedure(ByRef $ref_hWnd, ByRef $ref_hHBITMAP, ByRef $ref_hDC, ByRef $ref_hDC_Backbuffer, ByRef $ref_oDC_Obj, ByRef $ref_hGfxCtxt, ByRef $ref_hPen, ByRef $mouse)
+Func DemoWinddownProcedure(ByRef $ref_hWnd, ByRef $mouse)
      AdlibUnRegister ( "FrameCounterUpdate" )
      FrameCounterSingleton(False, Null)
 
-     _GDIPlus_PenDispose($ref_hPen)
-     _WinAPI_SelectObject($ref_hDC_Backbuffer, $ref_oDC_Obj)
-     _GDIPlus_GraphicsDispose($ref_hGfxCtxt)
-     _WinAPI_DeleteObject($ref_hHBITMAP)
-     _WinAPI_ReleaseDC($ref_hWnd, $ref_hDC)
-
-
+     ToolTip('')
      GUIDelete($ref_hWnd)
      RestorePointerSpeedAndAccel($mouse)
 
@@ -207,74 +186,79 @@ Func DemoWinddownProcedure(ByRef $ref_hWnd, ByRef $ref_hHBITMAP, ByRef $ref_hDC,
      GUISetState(@SW_ENABLE, $g_hForm)
 EndFunc
 
+Func DemoDrawRoutine($front,$back,$info,$state)
+     Local Static $hor = DllStructCreate('long x1;long y1;long x2;long y2;')
+     Local Static $ver = DllStructCreate('long x1;long y1;long x2;long y2;')
+     Local $modunit = $state.gridsize
 
+     BitBlt($back,0,0,$info.width,$info.height,$front,0,0,0x42,$gdi32dll)
 
-Func DemoDrawRoutine(Const $ctx, Const $pen, Const $width, Const $height)
-     Local Static $statePtr = DemoSingletonState()
-     Local $lineXpos, $lineYpos, $modceil
-     Local $currentX = DllStructGetData($statePtr,"x")
-     Local $currentY = DllStructGetData($statePtr,"y")
-     Local $currentZ = DllStructGetData($statePtr,"z")
-     Local $currentColor = DllStructGetData($statePtr,"color")
-     Local $modunit = DllStructGetData($statePtr,"gridsize")
+     Local $modceil = $modunit*ceiling($info.height/$modunit/2)     ; how many whole grid units needed to cover the window
+     $hor.x1=0
+     $hor.x2=$info.width-1
+     for $i=-$modceil to $modceil step $modunit
+         Local $y = $info.height/2+$i - mod($state.y,$modunit)
+         $hor.y1=$y
+         $hor.y2=$y
+         Polyline($back,$hor,2,$gdi32dll)
+     next
 
-                   _GDIPlus_GraphicsClear($ctx)                                                    ; sets canvas to black
-                   _GDIPlus_PenSetWidth($pen, 1)                                                   ; set pen size
-                   _GDIPlus_PenSetColor($pen, 0xFF808080)                                          ; grey grid
-                   $modceil = $modunit*ceiling($height/$modunit/2)                                 ; how many whole grid units needed to cover the window
-                   for $i=-$modceil to $modceil step $modunit
-                       $lineYpos = $height/2+$i - mod($currentY,$modunit)
-;                       $lineYpos = Mod(Mod($i-$currentY,$modceil)+$modceil,$modceil)
-                       _GDIPlus_GraphicsDrawLine($ctx, 0, $lineYpos,  $width-1, $lineYpos, $pen)   ; horizontal lines, from 0 to width-1 at ypos
-                   next
-                   $modceil = $modunit*ceiling($width/$modunit/2)                                  ; how many whole grid units needed to cover the window
-                   for $i=-$modceil to $modceil step $modunit
-                       $lineXpos = $width/2+$i - mod($currentX,$modunit)
-;                       $lineXpos = Mod(Mod($i-$currentX,$modceil)+$modceil,$modceil)
-                       _GDIPlus_GraphicsDrawLine($ctx, $lineXpos, 0, $lineXpos, $height-1, $pen)   ; vertical lines, from 0 to height-1 at xpos
-                   next
-#cs
-                   _GDIPlus_PenSetColor($pen, $currentColor)                                       ; xhair color
-                   _GDIPlus_GraphicsDrawLine($ctx,        0, $height/2,   $width, $height/2, $pen)
-                   _GDIPlus_GraphicsDrawLine($ctx, $width/2,         0, $width/2,   $height, $pen)
-#ce
+     Local $modceil = $modunit*ceiling($info.width/$modunit/2)      ; how many whole grid units needed to cover the window
+     $ver.y1=0
+     $ver.y2=$info.height-1
+     for $i=-$modceil to $modceil step $modunit
+         Local $x = $info.width/2+$i - mod($state.x,$modunit)
+         $ver.x1=$x
+         $ver.x2=$x
+         Polyline($back,$ver,2,$gdi32dll)
+     next
 
+     BitBlt($front,0,0,$info.width,$info.height,$back,0,0,0xCC0020,$gdi32dll)
 EndFunc
 
-
-
 Func Demo($toggle = null)
-     Local Static $ref_hWnd, $ref_hHBITMAP, $ref_hDC, $ref_hDC_Backbuffer, $ref_oDC_Obj, $ref_hGfxCtxt, $ref_hPen
-     Local Static $imgDim[4], $mouse=[10, 0, 0, 0] , $renderUnlocked=false
+     Local Static $hDemoWin, $hDCFront, $hDCBack, $hBitmap
+     Local Static $bufferInfo = DllStructCreate('long width;long height;')
+     Local Static $mouse=[10, 0, 0, 0] , $renderUnlocked=false
      Local Static $submodebackup=3
+     Local Static $demoState = DemoSingletonState()
      if $toggle then ; this must be checked before the render case, because $renderunlocked is stateful
         if $renderUnlocked then ; end the demo
            $renderUnlocked = false ; do this first in case main loop calls
            _FreeCursor()
-           DemoWinddownProcedure($ref_hWnd, $ref_hHBITMAP, $ref_hDC, $ref_hDC_Backbuffer, $ref_oDC_Obj, $ref_hGfxCtxt, $ref_hPen, $mouse )
+           ReleaseDC($hDemoWin,$hDCFront)
+           DeleteObject($hBitmap)
+           DeleteDC($hDCBack)
+           DemoWinddownProcedure($hDemoWin, $mouse )
            SetDeviceSubscriptionMode($submodebackup)
         else                    ; start the demo
            $submodebackup = GetDeviceSubscriptionMode()
            SetDeviceSubscriptionMode(3+BitAND(4,$submodebackup))
-           Local $arr = DemoStartupProcedure( $ref_hWnd, $ref_hHBITMAP, $ref_hDC, $ref_hDC_Backbuffer, $ref_oDC_Obj, $ref_hGfxCtxt, $ref_hPen, $mouse )
-           $imgDim[0]=$arr[0]
-           $imgDim[1]=$arr[1]
-           $imgDim[2]=$arr[2]
-           $imgDim[3]=$arr[3]
-           Local $demoState = DemoSingletonState()
-           $demoState.dpi = GetDpiForWindow($ref_hWnd, $user32dll)
-           $demoState.left = $imgDim[2]
-           $demoState.top = $imgDim[3]
-           $demoState.right = $imgDim[0]+$imgDim[2]
-           $demoState.bottom = $imgDim[1]+$imgDim[3]
-           _LockCursor(Int($imgDim[2]+$imgDim[0]/2),Int($imgDim[3]+$imgDim[1]/2),$user32dll)
-           GUISetCursor(16,1,$ref_hWnd)
+
+           Local $arr = DemoStartupProcedure( $hDemoWin, $mouse )
+           $bufferInfo.width=$arr[0]
+           $bufferInfo.height=$arr[1]
+
+           Local $hDCScreen = GetDC(Null)
+           $hDCFront = GetDC($hDemoWin)
+           $hDCBack = CreateCompatibleDC($hDCScreen)
+           $hBitmap = CreateCompatibleBitmap($hDCScreen,$bufferInfo.width,$bufferInfo.height)
+           SelectObject($hDCBack,$hBitmap)
+           SelectObject($hDCBack,GetStockObject(19))
+           SetDCPenColor($hDCBack,0x00808080)
+
+           $demoState.dpi = GetDpiForWindow($hDemoWin, $user32dll)
+           $demoState.left = $arr[2]
+           $demoState.top = $arr[3]
+           $demoState.right = $arr[0]+$arr[2]
+           $demoState.bottom = $arr[1]+$arr[3]
+           _LockCursor(Int($arr[2]+$arr[0]/2),Int($arr[3]+$arr[1]/2),$user32dll)
+           GUISetCursor(16,1,$hDemoWin)
            SetCursor($hLimeCursor, $user32dll)
            $renderUnlocked = true ; do this last
         endif
      elseif $renderUnlocked and $toggle=null then ; called from main loop. Note that we only run on main loop calls, otherwise the processing gets clogged
-           DemoDrawRoutine($ref_hGfxCtxt, $ref_hPen, $imgDim[0], $imgDim[1]) ; might need to add in ways to alter the image dimensions upon notification, which involves resizing the buffer allocation too and not just changing numbers
-           _WinAPI_BitBlt($ref_hDC, 0, 0, $imgDim[0],$imgDim[1], $ref_hDC_Backbuffer, 0, 0, $SRCCOPY)
+           DemoDrawRoutine($hDCFront,$hDCBack,$bufferInfo,$demoState)
            FrameCounterSingleton()
      endif
      Return $renderUnlocked ; if called specifically with false then just queries state
@@ -296,4 +280,71 @@ EndFunc
 
 Func FrameCounterUpdate()
      FrameCounterSingleton(true)
+EndFunc
+
+; this function is only run once, subsequent calls will just exit
+Func InitBigCursors($hor,$ver)
+#cs
+     Global $hWhiteCursor = _LoadBigCursor(@ScriptDir & "\assets\cursors\white.cur")
+     Global $hLimeCursor = _LoadBigCursor(@ScriptDir & "\assets\cursors\lime.cur")
+     Global $hCyanCursor  = _LoadBigCursor(@ScriptDir & "\assets\cursors\cyan.cur")
+     Global $hYellowCursor = _LoadBigCursor(@ScriptDir & "\assets\cursors\yellow.cur")
+#ce
+     Local Static $alreadyRun = False 
+     If $alreadyRun Then Return
+     $alreadyRun = True
+     Local $gdi32 = DllOpen('gdi32.dll'),$user32=DllOpen('user32.dll')
+     Local $hDC = DllCall($user32,'handle','GetDC','handle',Null)[0]
+     Local $tag = 'dword[' & $hor*$ver & '];'
+     Local $rawColor = [ _
+           DllStructCreate($tag) , _
+           DllStructCreate($tag) , _
+           DllStructCreate($tag) , _
+           DllStructCreate($tag) ]
+     Local $column=1+Int($hor/2)
+     For $row=1 to $ver
+          Local $n = ($row-1)*$hor+$column
+          DllStructSetData($rawColor[0], 1, 0xff00ff00, $n)
+          DllStructSetData($rawColor[1], 1, 0xffffff00, $n)
+          DllStructSetData($rawColor[2], 1, 0xff00ffff, $n)
+          DllStructSetData($rawColor[3], 1, 0xffffffff, $n)
+     Next
+     Local $row=1+Int($ver/2)
+     For $column=1 to $hor
+          Local $n = ($row-1)*$hor+$column
+          DllStructSetData($rawColor[0], 1, 0xff00ff00, $n)
+          DllStructSetData($rawColor[1], 1, 0xffffff00, $n)
+          DllStructSetData($rawColor[2], 1, 0xff00ffff, $n)
+          DllStructSetData($rawColor[3], 1, 0xffffffff, $n)
+     Next
+     Local $hbmColor = [ _
+           DllCall($gdi32,'handle','CreateBitmap','int',$hor,'int',$ver,'uint',1,'uint',32,'struct*',$rawColor[0])[0] , _
+           DllCall($gdi32,'handle','CreateBitmap','int',$hor,'int',$ver,'uint',1,'uint',32,'struct*',$rawColor[1])[0] , _
+           DllCall($gdi32,'handle','CreateBitmap','int',$hor,'int',$ver,'uint',1,'uint',32,'struct*',$rawColor[2])[0] , _
+           DllCall($gdi32,'handle','CreateBitmap','int',$hor,'int',$ver,'uint',1,'uint',32,'struct*',$rawColor[3])[0] ]
+     Local $hbmMask  = Dllcall($gdi32,'handle','CreateCompatibleBitmap','handle',$hDC, 'int',$hor,'int',$ver)[0]
+     Local $hCursor = [ _ 
+           CreateIconIndirect(False,int($hor/2),int($ver/2),$hbmMask,$hbmColor[0],$user32) , _
+           CreateIconIndirect(False,int($hor/2),int($ver/2),$hbmMask,$hbmColor[1],$user32) , _
+           CreateIconIndirect(False,int($hor/2),int($ver/2),$hbmMask,$hbmColor[2],$user32) , _
+           CreateIconIndirect(False,int($hor/2),int($ver/2),$hbmMask,$hbmColor[3],$user32) ]
+     DllCall($gdi32,'bool','DeleteObject','handle',$hbmMask)
+     DllCall($gdi32,'bool','DeleteObject','handle',$hbmColor[0])
+     DllCall($gdi32,'bool','DeleteObject','handle',$hbmColor[1])
+     DllCall($gdi32,'bool','DeleteObject','handle',$hbmColor[2])
+     DllCall($gdi32,'bool','DeleteObject','handle',$hbmColor[3])
+     DllClose($gdi32)
+     DllClose($user32)
+     Global $hLimeCursor   = $hCursor[0]
+     Global $hYellowCursor = $hCursor[1]
+     Global $hCyanCursor   = $hCursor[2]
+     Global $hWhiteCursor  = $hCursor[3]
+     OnAutoItExitRegister(CleanupCursors)
+EndFunc
+
+Func CleanupCursors()
+     DestroyCursor($hWhiteCursor)
+     DestroyCursor($hLimeCursor)
+     DestroyCursor($hCyanCursor)
+     DestroyCursor($hYellowCursor)
 EndFunc

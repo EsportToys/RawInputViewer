@@ -19,6 +19,7 @@
 #include "cmdline.au3"
 #include "rawhelpers.au3"
 #include "winapihelpers.au3"
+#include "gdihelpers.au3"
 #include "demo.au3"
 
 Global Const $GLOBAL_OPTIONS_INI_PATH = "options.ini"
@@ -29,6 +30,7 @@ Global Const $GLOBAL_INITIAL_XHAIR_COLOR = 0xff00ff00
 Global Const $GLOBAL_INITIAL_GRIDSIZE = 320
 Global Const $user32dll = DllOpen("user32.dll")
 Global Const $kernel32dll = DllOpen('kernel32.dll')
+Global Const $gdi32dll = DllOpen('gdi32.dll')
 Global Const $PERFORMANCE_FREQUENCY = QueryPerformanceFrequency()
 
 
@@ -52,8 +54,6 @@ Else
    initialize_i18n_strings($GLOBAL_OPTIONS_INI_PATH)
 EndIf
 
-Global $g_framecounter=0, $g_framelabel = ""
-Global $g_middle_drag[2], $g_mousetrap_bound[4]
 Global $gReportFileMkb, $gReportFileLst
 
 Global Const $g_msg_subscription_list = [$WM_INPUT, $WM_INPUT_DEVICE_CHANGE, $WM_MOVING, $WM_SIZE, $WM_ENTERMENULOOP, $WM_SYSCOMMAND]
@@ -82,7 +82,7 @@ GUICtrlSetOnEvent($g_toggle_button, GUICmdScriptToggle)
 GUICtrlSetOnEvent($g_suspend_button, GUICmdSuspendButton)
 GUICtrlSetOnEvent($g_device_button, GUICmdDeviceButton)
 GUICtrlSetOnEvent($g_demo_button, GUICmdDemoButton)
-GUISetOnEvent($GUI_EVENT_CLOSE, CmdExitProgram)
+GUISetOnEvent(-3, CmdExitProgram)
 
 SetProcessDPIAware()
 GUISetIcon($GLOBAL_PROGRAM_ICON_PATH)
@@ -91,73 +91,10 @@ UpdateText("", $g_label) ; inform function of the handle to the editctrl for inp
 UpdateList("", null, $g_log)   ; inform function of the handle to the editctrl for input device change
 Main()
 
-Func InitBigCursors($hor,$ver)
-#cs
-     Global $hWhiteCursor = _LoadBigCursor(@ScriptDir & "\assets\cursors\white.cur")
-     Global $hLimeCursor = _LoadBigCursor(@ScriptDir & "\assets\cursors\lime.cur")
-     Global $hCyanCursor  = _LoadBigCursor(@ScriptDir & "\assets\cursors\cyan.cur")
-     Global $hYellowCursor = _LoadBigCursor(@ScriptDir & "\assets\cursors\yellow.cur")
-#ce
-     Local Static $alreadyRun = False 
-     If $alreadyRun Then Return
-     $alreadyRun = True
-     Local $gdi32 = DllOpen('gdi32.dll'),$user32=DllOpen('user32.dll')
-     Local $hDC = DllCall('user32.dll','handle','GetDC','handle',Null)[0]
-     Local $rawColor = [ _
-           DllStructCreate('dword[' & $hor*$ver & '];') , _
-           DllStructCreate('dword[' & $hor*$ver & '];') , _
-           DllStructCreate('dword[' & $hor*$ver & '];') , _
-           DllStructCreate('dword[' & $hor*$ver & '];') ]
-     For $i=1 to $ver
-         For $j=1 to $hor
-             Local $n = ($i-1)*$hor+$j
-             If Int($ver/2)+1=$i or  Int($hor/2)+1=$j Then 
-                DllStructSetData($rawColor[0], 1, 0xff00ff00, $n)
-                DllStructSetData($rawColor[1], 1, 0xffffff00, $n)
-                DllStructSetData($rawColor[2], 1, 0xff00ffff, $n)
-                DllStructSetData($rawColor[3], 1, 0xffffffff, $n)
-             EndIf
-         Next
-     Next
-     Local $hbmColor = [ _
-           DllCall($gdi32,'handle','CreateBitmap','int',$hor,'int',$ver,'uint',1,'uint',32,'struct*',$rawColor[0])[0] , _
-           DllCall($gdi32,'handle','CreateBitmap','int',$hor,'int',$ver,'uint',1,'uint',32,'struct*',$rawColor[1])[0] , _
-           DllCall($gdi32,'handle','CreateBitmap','int',$hor,'int',$ver,'uint',1,'uint',32,'struct*',$rawColor[2])[0] , _
-           DllCall($gdi32,'handle','CreateBitmap','int',$hor,'int',$ver,'uint',1,'uint',32,'struct*',$rawColor[3])[0] ]
-     Local $hbmMask  = Dllcall($gdi32,'handle','CreateCompatibleBitmap','handle',$hDC, 'int',$hor,'int',$ver)[0]
-     Local $hCursor = [ _ 
-           CreateIconIndirect(False,int($hor/2),int($ver/2),$hbmMask,$hbmColor[0],$user32) , _
-           CreateIconIndirect(False,int($hor/2),int($ver/2),$hbmMask,$hbmColor[1],$user32) , _
-           CreateIconIndirect(False,int($hor/2),int($ver/2),$hbmMask,$hbmColor[2],$user32) , _
-           CreateIconIndirect(False,int($hor/2),int($ver/2),$hbmMask,$hbmColor[3],$user32) ]
-     DllCall($gdi32,'bool','DeleteObject','handle',$hbmMask)
-     DllCall($gdi32,'bool','DeleteObject','handle',$hbmColor[0])
-     DllCall($gdi32,'bool','DeleteObject','handle',$hbmColor[1])
-     DllCall($gdi32,'bool','DeleteObject','handle',$hbmColor[2])
-     DllCall($gdi32,'bool','DeleteObject','handle',$hbmColor[3])
-     DllClose($gdi32)
-     DllClose($user32)
-     Global $hLimeCursor   = $hCursor[0]
-     Global $hYellowCursor = $hCursor[1]
-     Global $hCyanCursor   = $hCursor[2]
-     Global $hWhiteCursor  = $hCursor[3]
-     OnAutoItExitRegister(CleanupCursors)
-EndFunc
-
-
-
-
 Func SetProcessDPIAware()
      Local $h=GUICreate('')
      DllCall("user32.dll", "bool", "SetProcessDPIAware")
      GUIDelete($h)
-EndFunc
-
-Func CleanupCursors()
-     DestroyCursor($hWhiteCursor)
-     DestroyCursor($hLimeCursor)
-     DestroyCursor($hCyanCursor)
-     DestroyCursor($hYellowCursor)
 EndFunc
 
 Func Main($switch = null)
@@ -252,10 +189,16 @@ Func WndProc($h,$m,$w,$l)
      local static $buffer_index = 0, $isRecording=false
      local $q = QueryPerformanceCounter($kernel32dll)
      Switch $m
-       Case 0xFF
-            If $isRecording Then ForwardTimestampedRawinput(MakeMessage($h,$m,$w,$l,$q))
+       Case 0xFF ; WM_INPUT
+            If $isRecording Then 
+               If Demo(False) Then
+                  ImmediateRawinput(MakeMessage($h,$m,$w,$l,$q))
+               Else
+                  DeferredRawinput(MakeMessage($h,$m,$w,$l,$q))
+               EndIf
+            EndIf
             Return 0
-       Case 0xFE
+       Case 0xFE ; WM_INPUT_DEVICE_CHANGE
             ForwardTimestampedMsg(Process_Device_Change, MakeMessage($h,$m,$w,$l,$q))
             Return 0
        Case $WM_NOTIFY
@@ -325,7 +268,7 @@ Func ForwardTimestampedMsg($func, $struct)
      $g_eventListenerQueued += QueueEvent($func, $struct)
 EndFunc
 
-Func ForwardTimestampedRawinput($struct)
+Func DeferredRawinput($struct)
      $g_rawinput_queued += WriteToRawinputBuffer($struct)
 EndFunc
 
@@ -379,6 +322,10 @@ Func QueueEvent($func, $args)
           FileWrite($gReportFileMkb, "DROPPED EVENT " & $func & " AT T=" & $time & @CRLF)
           Return 0
      EndIf
+EndFunc
+
+Func ImmediateRawinput($misc)
+     Process_Rawinput_Data(_RawInputFetchData($misc.lParam, $user32dll),$misc)
 EndFunc
 
 Func WriteToRawinputBuffer($misc)
