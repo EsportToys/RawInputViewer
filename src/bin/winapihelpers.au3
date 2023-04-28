@@ -60,6 +60,10 @@ Func _LockCursor($x,$y,$_dll='user32.dll')
      Return _TrapCursor($x,$y,$x+1,$y+1,$_dll)
 EndFunc
 
+Func _CenterCursor($left,$top,$right,$bottom,$_dll='user32.dll')
+     Return _LockCursor(Int(($left+$right)/2),Int(($top+$bottom)/2),$_dll)
+EndFunc
+
 Func _LoadBigCursor($filepath,$_dll='user32.dll')
      Return _
      DllCall($_dll, "handle", "LoadImage", _

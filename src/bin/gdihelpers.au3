@@ -8,6 +8,10 @@ Func ReleaseDC($hWnd,$hDC,$_dll='user32.dll')
      Return DllCall($_dll,'int','ReleaseDC','handle',$hWnd,'handle',$hDC)[0]
 EndFunc
 
+Func FillRect($hDC,$rect,$hBrush,$_dll='user32.dll')
+     Return DllCall($_dll,'int','FillRect','handle',$hDC,'struct*',$rect,'handle',$hBrush)[0]
+EndFunc
+
 Func BitBlt($dst,$x,$y,$cx,$cy,$src,$x1,$y1,$rop,$_dll='gdi32.dll')
      Return DllCall($_dll,'bool','BitBlt','handle',$dst,'int',$x,'int',$y,'int',$cx,'int',$cy,'handle',$src,'int',$x1,'int',$y1,'dword',$rop)[0]
 EndFunc
@@ -50,4 +54,8 @@ EndFunc
 
 Func DeleteObject($hObj,$_dll='gdi32.dll')
      Return DllCall($_dll,'bool','DeleteObject','handle',$hObj)[0]
+EndFunc
+
+Func GdiFlush($_dll='gdi32.dll')
+     Return DllCall($_dll,'bool','GdiFlush')
 EndFunc

@@ -190,13 +190,7 @@ Func WndProc($h,$m,$w,$l)
      local $q = QueryPerformanceCounter($kernel32dll)
      Switch $m
        Case 0xFF ; WM_INPUT
-            If $isRecording Then 
-               If Demo(False) Then
-                  ImmediateRawinput(MakeMessage($h,$m,$w,$l,$q))
-               Else
-                  DeferredRawinput(MakeMessage($h,$m,$w,$l,$q))
-               EndIf
-            EndIf
+            If $isRecording Then DeferredRawinput(MakeMessage($h,$m,$w,$l,$q))
             Return 0
        Case 0xFE ; WM_INPUT_DEVICE_CHANGE
             ForwardTimestampedMsg(Process_Device_Change, MakeMessage($h,$m,$w,$l,$q))
@@ -324,7 +318,7 @@ Func QueueEvent($func, $args)
      EndIf
 EndFunc
 
-Func ImmediateRawinput($misc)
+Func ImmediateRawinput($misc) ; don't use this
      Process_Rawinput_Data(_RawInputFetchData($misc.lParam, $user32dll),$misc)
 EndFunc
 
