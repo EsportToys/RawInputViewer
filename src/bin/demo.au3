@@ -67,10 +67,9 @@ Func CameraLockSetState($lock=Null,$target=Null)
      Local $mode = $_.camlock
      If Not (Null=$lock) Then
         DllStructSetData($_, "camlock", $lock)
-        $mode = $lock 
      EndIf
-     If $mode Then
-        _LockCursor(Int(($_.left+$_.right)/2),Int(($_.top+$_.bottom)/2),$user32dll) 
+     If $_.camlock Then
+        _CenterCursor($_.left,$_.top,$_.right,$_.bottom,$user32dll)
      Else
         _TrapCursor($_.left,$_.top,$_.right,$_.bottom,$user32dll)
      EndIf
@@ -190,6 +189,8 @@ Func DemoDrawRoutine($front,$back,$info,$state)
      Local Static $hor = DllStructCreate('long x1;long y1;long x2;long y2;')
      Local Static $ver = DllStructCreate('long x1;long y1;long x2;long y2;')
      Local $modunit = $state.gridsize
+     Local $hDCPen = GetStockObject(19,$gdi32dll)
+     SetDCPenColor($back,0x00808080,$gdi32dll)
 
      BitBlt($back,0,0,$info.width,$info.height,$front,0,0,0x42,$gdi32dll)
 
@@ -199,8 +200,8 @@ Func DemoDrawRoutine($front,$back,$info,$state)
      for $i=-$modceil to $modceil step $modunit
          Local $y = $info.height/2+$i - mod($state.y,$modunit)
          $hor.y1=$y
-         $hor.y2=$y
-         Polyline($back,$hor,2,$gdi32dll)
+         $hor.y2=$y+1
+         FillRect($back,$hor,$hDCPen,$user32dll)
      next
 
      Local $modceil = $modunit*ceiling($info.width/$modunit/2)      ; how many whole grid units needed to cover the window
@@ -209,8 +210,8 @@ Func DemoDrawRoutine($front,$back,$info,$state)
      for $i=-$modceil to $modceil step $modunit
          Local $x = $info.width/2+$i - mod($state.x,$modunit)
          $ver.x1=$x
-         $ver.x2=$x
-         Polyline($back,$ver,2,$gdi32dll)
+         $ver.x2=$x+1
+         FillRect($back,$ver,$hDCPen,$user32dll)
      next
 
      BitBlt($front,0,0,$info.width,$info.height,$back,0,0,0xCC0020,$gdi32dll)
@@ -243,18 +244,16 @@ Func Demo($toggle = null)
            $hDCFront = GetDC($hDemoWin)
            $hDCBack = CreateCompatibleDC($hDCScreen)
            $hBitmap = CreateCompatibleBitmap($hDCScreen,$bufferInfo.width,$bufferInfo.height)
+           ReleaseDC(Null,$hDCScreen)
            SelectObject($hDCBack,$hBitmap)
-           SelectObject($hDCBack,GetStockObject(19))
-           SetDCPenColor($hDCBack,0x00808080)
 
            $demoState.dpi = GetDpiForWindow($hDemoWin, $user32dll)
            $demoState.left = $arr[2]
            $demoState.top = $arr[3]
            $demoState.right = $arr[0]+$arr[2]
            $demoState.bottom = $arr[1]+$arr[3]
-           _LockCursor(Int($arr[2]+$arr[0]/2),Int($arr[3]+$arr[1]/2),$user32dll)
-           GUISetCursor(16,1,$hDemoWin)
-           SetCursor($hLimeCursor, $user32dll)
+           _CenterCursor($demoState.left,$demoState.top,$demoState.right,$demoState.bottom)
+           SetCursor($hLimeCursor)
            $renderUnlocked = true ; do this last
         endif
      elseif $renderUnlocked and $toggle=null then ; called from main loop. Note that we only run on main loop calls, otherwise the processing gets clogged
